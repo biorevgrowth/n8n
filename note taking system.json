@@ -1,0 +1,291 @@
+{
+  "name": "OneDrive Voice Notes to Notion",
+  "nodes": [
+    {
+      "parameters": {
+        "resource": "file",
+        "event": "fileCreated",
+        "watchFolder": "/VoiceNotes",
+        "options": {
+          "fileTypes": ["audio/mpeg", "audio/mp4", "audio/wav", "audio/ogg"]
+        }
+      },
+      "id": "1a2b3c4d-5e6f-7g8h-9i0j-k1l2m3n4o5p6",
+      "name": "OneDrive Trigger",
+      "type": "n8n-nodes-base.microsoftOneDriveTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "download",
+        "fileId": "={{ $json.id }}"
+      },
+      "id": "2b3c4d5e-6f7g-8h9i-0j1k-l2m3n4o5p6q7",
+      "name": "Download Audio File",
+      "type": "n8n-nodes-base.microsoftOneDrive",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "binaryPropertyName": "data",
+        "model": "whisper-1",
+        "options": {
+          "language": "en",
+          "responseFormat": "text"
+        }
+      },
+      "id": "3c4d5e6f-7g8h-9i0j-1k2l-m3n4o5p6q7r8",
+      "name": "Transcribe Audio",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "resource": "text",
+        "operation": "complete",
+        "model": "gpt-4o-mini",
+        "prompt": "=Please analyze this transcript and provide:\n\n**SUMMARY:**\nA concise 2-3 sentence summary of the main content.\n\n**MAIN POINTS:**\n• [Key point 1]\n• [Key point 2]\n• [Key point 3]\n\n**ACTION ITEMS:**\n• [Action item 1 if any]\n• [Action item 2 if any]\n\n**KEY INSIGHTS:**\n• [Insight 1]\n• [Insight 2]\n\n**FOLLOW-UP QUESTIONS:**\n• [Question 1]\n• [Question 2]\n\nTranscript:\n{{ $('Transcribe Audio').item(0).json.text }}",
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 1000
+        }
+      },
+      "id": "4d5e6f7g-8h9i-0j1k-2l3m-n4o5p6q7r8s9",
+      "name": "Generate Summary & Analysis",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "resource": "text",
+        "operation": "complete",
+        "model": "gpt-4o-mini",
+        "prompt": "=Generate a concise, descriptive title (max 50 characters) for this voice note based on its content:\n\n{{ $('Transcribe Audio').item(0).json.text }}",
+        "options": {
+          "temperature": 0.5,
+          "maxTokens": 50
+        }
+      },
+      "id": "5e6f7g8h-9i0j-1k2l-3m4n-o5p6q7r8s9t0",
+      "name": "Generate Title",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [900, 480]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get data from previous nodes\nconst oneDriveData = $('OneDrive Trigger').item(0).json;\nconst transcript = $('Transcribe Audio').item(0).json.text;\nconst analysis = $('Generate Summary & Analysis').item(0).json.choices[0].message.content;\nconst aiTitle = $('Generate Title').item(0).json.choices[0].message.content;\n\n// Calculate audio duration from file size (rough estimate)\nconst fileSizeBytes = oneDriveData.size || 0;\nconst estimatedDurationSeconds = Math.round(fileSizeBytes / 32000); // Rough estimate for compressed audio\n\n// Format duration as HH:MM:SS\nfunction formatDuration(seconds) {\n  const hours = Math.floor(seconds / 3600);\n  const minutes = Math.floor((seconds % 3600) / 60);\n  const secs = seconds % 60;\n  \n  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;\n}\n\n// Prepare Notion page content\nconst pageTitle = aiTitle.replace(/\"/g, '').trim() || oneDriveData.name.replace(/\\.[^/.]+$/, \"\");\nconst createdDate = oneDriveData.createdDateTime || new Date().toISOString();\n\n// Create rich text blocks for Notion\nconst pageContent = {\n  title: pageTitle,\n  properties: {\n    \"Duration (Seconds)\": estimatedDurationSeconds,\n    \"File Name\": oneDriveData.name,\n    \"Created Date\": createdDate.split('T')[0],\n    \"File Link\": oneDriveData.webUrl || '',\n    \"Tag\": \"AI Transcription\"\n  },\n  content: {\n    transcript: transcript,\n    analysis: analysis,\n    metadata: {\n      fileName: oneDriveData.name,\n      fileSize: oneDriveData.size,\n      duration: formatDuration(estimatedDurationSeconds),\n      createdDate: createdDate\n    }\n  }\n};\n\nreturn [pageContent];"
+      },
+      "id": "6f7g8h9i-0j1k-2l3m-4n5o-p6q7r8s9t0u1",
+      "name": "Format Data for Notion",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": "YOUR_NOTION_DATABASE_ID",
+        "title": "={{ $json.title }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Duration (Seconds)",
+              "type": "number",
+              "numberValue": "={{ $json.properties['Duration (Seconds)'] }}"
+            },
+            {
+              "key": "File Name",
+              "type": "richText",
+              "richTextValue": "={{ $json.properties['File Name'] }}"
+            },
+            {
+              "key": "Created Date",
+              "type": "date",
+              "dateValue": "={{ $json.properties['Created Date'] }}"
+            },
+            {
+              "key": "File Link",
+              "type": "url",
+              "urlValue": "={{ $json.properties['File Link'] }}"
+            },
+            {
+              "key": "Tag",
+              "type": "select",
+              "selectValue": "={{ $json.properties['Tag'] }}"
+            }
+          ]
+        },
+        "blockUi": {
+          "blockValues": [
+            {
+              "type": "heading_2",
+              "heading_2": {
+                "richTextUi": {
+                  "richTextValue": [
+                    {
+                      "textType": "text",
+                      "text": "📝 Summary & Analysis"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "type": "paragraph",
+              "paragraph": {
+                "richTextUi": {
+                  "richTextValue": [
+                    {
+                      "textType": "text",
+                      "text": "={{ $json.content.analysis }}"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "type": "heading_2",
+              "heading_2": {
+                "richTextUi": {
+                  "richTextValue": [
+                    {
+                      "textType": "text",
+                      "text": "📜 Full Transcript"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "type": "paragraph",
+              "paragraph": {
+                "richTextUi": {
+                  "richTextValue": [
+                    {
+                      "textType": "text",
+                      "text": "={{ $json.content.transcript }}"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "type": "divider"
+            },
+            {
+              "type": "callout",
+              "callout": {
+                "richTextUi": {
+                  "richTextValue": [
+                    {
+                      "textType": "text",
+                      "text": "🎵 Original File: {{ $json.content.metadata.fileName }}\\n⏱️ Duration: {{ $json.content.metadata.duration }}\\n📅 Created: {{ $json.content.metadata.createdDate }}\\n💾 Size: {{ Math.round($json.content.metadata.fileSize / 1024) }} KB"
+                    }
+                  ]
+                },
+                "icon": {
+                  "emoji": "🤖"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "id": "7g8h9i0j-1k2l-3m4n-5o6p-q7r8s9t0u1v2",
+      "name": "Create Notion Page",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "OneDrive Trigger": {
+      "main": [
+        [
+          {
+            "node": "Download Audio File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Audio File": {
+      "main": [
+        [
+          {
+            "node": "Transcribe Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe Audio": {
+      "main": [
+        [
+          {
+            "node": "Generate Summary & Analysis",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generate Title",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Summary & Analysis": {
+      "main": [
+        [
+          {
+            "node": "Format Data for Notion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Title": {
+      "main": [
+        [
+          {
+            "node": "Format Data for Notion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Data for Notion": {
+      "main": [
+        [
+          {
+            "node": "Create Notion Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": {},
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-10T00:00:00.000Z",
+  "versionId": "1"
+}
